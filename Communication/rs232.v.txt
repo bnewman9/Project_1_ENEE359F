@@ -1,0 +1,1308 @@
+/*=================================================================*/
+/*===  RS232 LIBRARY  =============================================*/
+/*=================================================================*/
+
+/* 
+ * FILE: RS232.v
+ * PROGRAMMER: William L. Bahn
+ *
+ * CONTENTS:
+ *
+ * NAMING CONVENTION:
+ */
+
+/*
+ * William L. Bahn
+ * FPGA-based RS-232 UART-Lite
+ *
+ * Digilent D2 Pin Assignments:
+ * RXD P202
+ * TXD P201
+ * RTS P195
+ * CTS P199
+ * DSR P200
+ * 
+ *   BAUD  Bit Period Half-Period (cycles @ 50MHz)
+ *   9600	  104.2 us	2604
+ *  19200      52.1 us  1302
+ *  38400      26.0 us   651
+ * 115200       8.68us   217
+ */
+/* This module operates completely synchronously with the system master
+ * clock. The following subsidiary waveforms are generated:
+ * 
+ * BaudTick: A one-clock wide pulse that occurs at twice the Buad rate
+ * Baud: A square wave at the Baud rate. The BaudTick pulses occur
+ * at the end of each half of the Baud cycle.
+ *	Sending: The UART is (or will be) sending data.
+ * 
+ * When the SEND signal is received, a one-shot is fired if the UART is
+ * not already exporting data. If it is exporting data, the SEND signal
+ * is ignored. If it is acted upon, the one-shot that 
+ */
+/* Instead of using a counter, the transmit event pipeline uses a second
+ * shift register that runs in parallel with the one containing the data
+ * but is loaded with 1's at the same time that the actual data is loaded
+ * into the data shift register except for the bit corresponding to the
+ * the Stop Bit. The serial output of the second shiftregister is used to
+ * decide if the data should still be shifted. All loads and shifts occur
+ * in conjuction with the rising edge of the Baud clock.
+ */
+
+/*
+ *=========================================================================
+ * RS-232 PACKET INTERFACE
+ *=========================================================================
+ * 
+ * MODULE:    RS232wPACKET()
+ */
+
+module RS232wPACKET(Test16, Test, ToOther, FromOther, 
+                    NoXonXoff, Escape, 
+						  Push, Pop, 
+                    PacketPushed, PacketPopped, 
+                    NoEcho, NoPackets, NoBytes, Full, Lost, 
+						  TXD, RXD, RTS, CTS, DSR, rst, clk);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	parameter WIDTH = 8;
+	parameter DEPTH = 16;
+	parameter LOG2DEPTH = 4;
+
+	output [15:0] Test;		  // Test Output Signals
+	output [15:0] Test16;	  // Test Output Signals
+	input  [7:0] ToOther;     // Data to be sent out RS-232
+	output [7:0] FromOther;   // Data received from RS-232
+	input  NoXonXoff;         // Disable XonXoff Flow Control
+	output Escape;            // Flag indicating an ESC character
+	input  Push, Pop;         // Push/Pop data to/from RS-232
+	input  PacketPushed;      // An outgoing packet is complete
+	input  PacketPopped;      // An incoming packet has been retrieved
+	input  NoEcho;            // Disable incoming data echo back 
+	output NoPackets;         // Input Packet Buffer has no complete packets.
+	output NoBytes;			  // Input Packet Buffer is completely empty
+	output Full;              // Output Packet Buffer (to RS-232) is full
+	output Lost;				  // Indicates incoming data was lost
+	input  TXD, RTS;			  // RS-232 external signals
+	output RXD, CTS, DSR;	  // RS-232 external signals
+	input  rst, clk;			  // Master reset and clock
+
+	// IPB  = Input Packet Buffer
+	// OPB  = Outpuer Packet Buffer
+	// UART = UART 
+
+	// Internal Data Path
+	wire [7:0] UART_FromOther, IPB_DataIn;
+	wire [7:0] OPB_DataOut, UART_ToOther;
+
+	// Control
+	wire UART_FF, UART_EF;
+	wire UART_Push, UART_Pop;
+	wire IPB_Push, IPB_Pop;
+	wire OPB_Push, OPB_Pop;
+	wire IPB_FF, IPB_AF, IPB_HF, IPB_AE, IPB_EF;
+	wire OPB_FF, OPB_AF, OPB_HF, OPB_AE, OPB_EF;
+	wire IPB_PacketPushed, OPB_PacketPopped;
+	wire [(LOG2DEPTH-1):0] IPB_Lines, OPB_Lines;
+	
+	// Glue Logic
+	assign NoPackets = ((IPB_Lines == 0)? HI : LO);
+	assign OPB_NoPackets = ((OPB_Lines == 0)? HI : LO);
+	assign NoBytes = IPB_EF;
+	assign Full = OPB_FF;
+	assign IPB_Pop = Pop;
+	assign OPB_Push = Push;
+
+	// Test Signal Assignments
+	assign Test[0]  = UART_EF;
+	assign Test[1]  = UART_FF;
+	assign Test[2]  = UART_Push;
+	assign Test[3]  = UART_Pop;
+	assign Test[4]  = PacketPushed;
+	assign Test[5]  = PacketPopped;
+	assign Test[6]  = IPB_PacketPushed;
+	assign Test[7]  = OPB_PacketPopped;
+	assign Test[8]  = NoBytes;
+	assign Test[9]  = IPB_FF;
+	assign Test[10] = OPB_EF;
+	assign Test[11] = Escape;
+	assign Test[12] = IPB_Push;
+	assign Test[13] = IPB_Pop;
+	assign Test[14] = OPB_Push;
+	assign Test[15] = OPB_Pop;
+
+	// Structural Definition
+	RS232wECHO UARTwE
+	(
+		.Test16(Test16),
+		.ToOther(UART_ToOther), .FromOther(UART_FromOther), 
+		.NoXonXoff(NoXonXoff), .Escape(Escape), 
+		.Push(UART_Push), .Pop(UART_Pop), .NoEcho(NoEcho), 
+		.Empty(UART_EF), .Full(UART_FF), .Lost(Lost), 
+		.TXD(TXD), .RXD(RXD), .RTS(RTS), .CTS(CTS), .DSR(DSR), 
+		.rst(rst), .clk(clk)
+	);
+
+	PacketBuffer16 PACK_IN
+	(
+		.DataOut(FromOther), .DataIn(IPB_DataIn), 
+		.PacketIn(IPB_PacketPushed), .PacketOut(PacketPopped), .Lines(IPB_Lines), 
+		.FF(IPB_FF), .AF(IPB_AF), .HF(IPB_HF), .AE(IPB_AE), .EF(IPB_EF), 
+		.Push(IPB_Push), .Pop(IPB_Pop), 
+		.Dump(rst), .Clk(clk)
+	);
+
+	RS232_PACKET_CTLR_R RCTL
+	(
+		.OutputData(IPB_DataIn), .InputData(UART_FromOther), 
+		.Push(IPB_Push), .Pop(UART_Pop), 
+		.PacketPushed(IPB_PacketPushed), .Full(IPB_FF), .Empty(UART_EF)
+	);
+
+	PacketBuffer16 PACK_OUT
+	(
+		.DataOut(OPB_DataOut), .DataIn(ToOther), 
+		.PacketIn(PacketPushed), .PacketOut(OPB_PacketPopped), .Lines(OPB_Lines), 
+		.FF(OPB_FF), .AF(OPB_AF), .HF(OPB_HF), .AE(OPB_AE), .EF(OPB_EF), 
+		.Push(OPB_Push), .Pop(OPB_Pop), 
+		.Dump(rst), .Clk(clk)
+	);
+
+	RS232_PACKET_CTLR_T TCTL
+	(
+		.OutputData(UART_ToOther), .InputData(OPB_DataOut), 
+		.Push(UART_Push), .Pop(OPB_Pop), .PacketPopped(OPB_PacketPopped), 
+		.NoPackets(OPB_NoPackets), .Full(UART_FF), .Empty(OPB_EF)
+	);
+
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS-232 RECEIVE PACKET CONTROLLER
+ *=========================================================================
+ * 
+ * MODULE:    RS232_PACKET_CTLR_R()
+ *
+ * The receive-side controller handles traffic coming from the RS-232 UART
+ * and transfers the characters to the Output Packet Buffer with the 
+ * following modifications:
+ *
+ *   CR characters are discarded.
+ *   LF characters are replaced by NUL characters.
+ *   A 'PacketPushed' is asserted when the NUL character is pushed.
+ *
+ * The 'NoPackets' output from the controller means that no complete packets
+ * are contained in the Output Packet Buffer while a 'NoBytes' output means
+ * that the Output Packet Buffer is completely empty.
+ *
+ * The controller gates the transfer of characters when the Packet Buffer is
+ * full. If this happens when there are no complete lines in the buffer and
+ * when the higher level logic is waiting for a complete line, this will 
+ * cause a Packet Buffer Stall.
+ * 
+ */
+
+module RS232_PACKET_CTLR_R 
+(
+	OutputData, InputData, Push, Pop, PacketPushed, Full, Empty
+);
+
+	parameter LO = 1'b0, HI = 1'b1;
+	parameter
+		NUL = 8'h00,
+		LINEFEED = 8'h0A,
+		CARRIAGE_RETURN = 8'h0D,
+		ESCAPE = 8'h1B;
+
+	output [7:0] OutputData;      // Data to Input Packet Buffer
+	input  [7:0] InputData;			// Data from UART
+	output Push;						// Push command to Input Packet Buffer
+	output Pop;							// Pop command to UART
+	output PacketPushed; 			// Complete packet has been transferred
+	input  Full;						// FF from Input Packet Buffer
+	input  Empty;                 // EF from UART Receive Buffer
+	
+	reg Packet, Keep;
+	reg [7:0] OutputData;
+	wire Transfer;
+
+	assign Transfer = (((Full == LO)&&(Empty == LO))? HI : LO);
+
+	always @ (InputData)
+	begin
+		case (InputData)
+			LINEFEED:
+				begin
+					OutputData <= NUL;
+					Packet <= HI;
+					Keep <= HI;
+				end
+			CARRIAGE_RETURN:
+				begin
+					OutputData <= NUL;
+					Packet <= LO;
+					Keep <= LO;
+				end
+			default:
+				begin
+					OutputData <= InputData;
+					Packet <= LO;
+					Keep <= HI;
+				end
+		endcase
+	end		
+
+	assign PacketPushed = ((Transfer == HI)? Packet : LO);
+	assign Push = ((Transfer == HI)&&(Keep == HI));
+	assign Pop = Transfer;
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS-232 OUTPUT PACKET CONTROLLER
+ *=========================================================================
+ * 
+ * MODULE:    RS232_PACKET_CTLR_T()
+ *
+ * The transmit-side controller handles traffic coming from Output Packet 
+ * Buffer destined for the RS-232 UART and transfers the characters to the
+ * UART with following modifications:
+ *
+ *   NUL characters are discarded.
+ *   A 'PacketPopped' is asserted when the NULL character is popped.
+ *
+ * The controller sits IDLE until it is sensed that a complete packet in
+ * the Output Packet Buffer. It then commences transferring characters to
+ * the UART until the NUL character is encountered.
+ *
+ * The controller gates the transfer of characters when the UART's buffer is
+ * full.
+ */
+
+module RS232_PACKET_CTLR_T (OutputData, InputData, 
+                            Push, Pop, PacketPopped, 
+									 NoPackets, Full, Empty);
+
+	parameter LO = 1'b0, HI = 1'b1;
+	parameter
+		NUL = 8'h00,
+		LINEFEED = 8'h0A,
+		CARRIAGE_RETURN = 8'h0D,
+		ESCAPE = 8'h1B;
+
+	output [7:0] OutputData;      // Data to Input Packet Buffer
+	input  [7:0] InputData;			// Data from UART
+	output Push;						// Push command to Input Packet Buffer
+	output Pop;							// Pop command to UART
+	output PacketPopped;				// Complete packet has been transferred
+	input  NoPackets;             // Output Packet Buffer has no packets
+	input  Full;						// FF from UART Transmit Buffer
+	input  Empty;                 // EF from Output Packet Buffer
+	
+	reg Packet, Keep;
+	reg [7:0] OutputData;
+	wire Transfer;
+
+	assign Transfer = ((  (NoPackets == LO)
+	                    &&(Full == LO)
+							  &&(Empty == LO) )? HI : LO);
+
+	always @ (InputData)
+	begin
+		case (InputData)
+			NUL:
+				begin
+					OutputData <= NUL;
+					Packet <= HI;
+					Keep <= LO;
+				end
+			default:
+				begin
+					OutputData <= InputData;
+					Packet <= LO;
+					Keep <= HI;
+				end
+		endcase
+	end		
+
+	assign PacketPopped = ((Transfer == HI)? Packet : LO);
+	assign Push = ((Transfer == HI)&&(Keep == HI));
+	assign Pop = Transfer;
+
+endmodule
+
+module RS232wECHO
+(
+	Test16, ToOther, FromOther, NoXonXoff, Escape, Push, Pop, NoEcho, 
+	Empty, Full, Lost, TXD, RXD, RTS, CTS, DSR, rst, clk
+);
+
+	parameter LO = 1'b0, HI = 1'b1;
+	parameter XON    = 8'h11;
+	parameter XOFF   = 8'h13;
+
+	output [15:0] Test16;
+	input  [7:0] ToOther;     // Data to be sent out RS-232
+	output [7:0] FromOther;   // Data received from RS-232
+	input  NoXonXoff;         // Disable XonXoff Flow Control
+	output Escape;            // Flag indicating an ESC character
+	input  Push, Pop;         // Push/Pop data to/from RS-232
+	input  NoEcho;            // Disable incoming data echo back 
+	output Empty;             // FIFO coming from RS-232 is empty
+	output Full;              // FIFO going to RS-232 is full
+	output Lost;				  // Indicated incoming data was lost
+	input  TXD, RTS;			  // RS-232 external signals
+	output RXD, CTS, DSR;	  // RS-232 external signals
+	input  rst, clk;			  // Master reset and clock
+
+	// Internal Data Path
+	wire [7:0] ToOther_C;
+	wire [7:0] Transmit, Received;
+
+	// Control
+	wire PO_FF, PI_EF;
+	wire CI_FF, CI_AF, CI_HF, CI_AE       ;
+	wire        CO_AF, CO_HF, CO_AE, CO_EF;
+	wire Transfer_CT, Transfer_PT, Transfer_R;
+	wire Pop_PHY, Push_PHY, Pop_CORE, Push_CORE;	
+	wire MuxEcho;
+
+	wire _CTS, _DSR;
+	//assign CTS = RTS;
+	//assign DSR = HI;
+	wire [1:0] Test;
+	assign CTS = Test[0];
+	assign DSR = Test[1];
+
+	wire Drop;	
+	RS232wFIFO PHY
+	(
+		.Test16(Test16),
+		.ToOther(Transmit), .FromOther(Received), 
+		.NoXonXoff(NoXonXoff), .Escape(Escape), 
+		.Push(Push_PHY), .Pop(Pop_PHY), 
+		.Empty(PI_EF), .Full(PO_FF), .Lost(Lost), 
+		.TXD(TXD), .RXD(RXD), .RTS(RTS), .CTS(_CTS), .DSR(_DSR), 
+		.rst(rst), .clk(clk)
+	);
+	
+	assign Drop = ((Received == XON)||(Received == XOFF))? HI : LO;
+
+	RS232_ECHO_CTLR ECHO
+	(
+		.Test(Test), .Drop(Drop),
+		.Pop_PHY(Pop_PHY), .Push_PHY(Push_PHY), 
+		.Pop_CORE(Pop_CORE), .Push_CORE(Push_CORE),
+		.MuxEcho(MuxEcho), .NoEcho(NoEcho), 
+		.PI_EF(PI_EF), .PO_FF(PO_FF), .CI_FF(CI_FF), .CO_EF(CO_EF)
+	);
+
+	FIFO16x8 CORE_OUT	// Data going from FPGA to HOST
+	(
+		.DataOut(ToOther_C), .DataIn(ToOther), 
+		.FF(Full), .AF(CO_AF), .HF(CO_HF), .AE(CO_AE), .EF(CO_EF), 
+		.Push(Push), .Pop(Pop_CORE), .Dump(rst), .Clk(clk)
+	);
+
+	FIFO16x8 CORE_IN  // Data coming from HOST to FPGA
+	(
+		.DataOut(FromOther), .DataIn(Received), 
+		.FF(CI_FF), .AF(CI_AF), .HF(CI_HF), .AE(CI_AE), .EF(Empty), 
+		.Push(Push_CORE), .Pop(Pop), .Dump(rst), .Clk(clk)
+	);
+
+	MUX2x8 ECHOSWITCH
+	(
+		.Q(Transmit), .D1(Received), .D0(ToOther_C), .Sel(MuxEcho)
+	);
+
+endmodule
+
+/*
+ * RS-232 Echo Controller
+ *
+ * This module controls the transfers between the Physical Layer FIFO's and
+ * the FIFO's that the User sees at the core interface. There are two types
+ * of transfers - Outgoing transfers that move data from the Core Layer's
+ * Outgoing FIFO to the Physical Layer's Outgoing FIFO and Incoming transfers 
+ * that move data from the Physical Layer's Incoming FIFO to the Core Layer's 
+ * Incoming FIFO. An incoming transfer can also cause a copy of the data from 
+ * the to be Physical Layer's Incoming FIFO to be pushed into the Physical
+ * Layer's Outgoing FIFO if the Echo bit is asserted.
+ *
+ * To simplify the control logic, Incoming and Outgoing transfers are serviced
+ * in a mutually exclusive mode and are only serviced if all of the conditions
+ * necessary to complete a transfer are present. Since transfers where not all
+ * of the conditions are met are not performed at all, they may be performed
+ * later once all of the conditions are met. This ensures that no data is lost
+ * internally and, as long as the FIFO's that accept external data do not 
+ * overflow, no data will be lost at all. 
+ *
+ * The conditions that must be met to declare a pending transfer are:
+ *
+ * Outgoing Transfer:
+ *   The Core Layer Outgoing FIFO must not be empty.
+ *   The Physical Layer Outgoing FIFO must not be full.
+ *
+ * Incoming Transfer:
+ *   The Physical Layer Incoming FIFO must not be empty.
+ *   The Core Layer Incoming FIFO must not be full.
+ *   If the Echo bit is asserted:
+ *      The Physical Layer Outgoing FIFO must not be full.
+ *
+ * While both types of transfers can be pending at the same time, the Incoming
+ * Transfer has priority.
+ *
+ */
+
+module RS232_ECHO_CTLR (Test, Pop_PHY, Push_PHY, Pop_CORE, Push_CORE, 
+        MuxEcho, Drop, NoEcho, PI_EF, PO_FF, CI_FF, CO_EF);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	output [1:0] Test;
+	output Push_PHY, Pop_PHY, Push_CORE, Pop_CORE, MuxEcho;
+	input NoEcho, Drop;
+	input PO_FF, PI_EF, CI_FF, CO_EF;
+
+	reg MuxEcho;
+	reg Push_PHY, Pop_PHY;
+	reg Push_CORE, Pop_CORE;
+
+	wire Pending_T, Pending_R;
+	assign Pending_T = (CO_EF==LO)&&(PO_FF==LO);
+	assign Pending_R = (PI_EF==LO)&&(CI_FF==LO)&&((NoEcho==LO)?(PO_FF==LO):HI);
+
+	assign Test[0] = MuxEcho;
+	assign Test[1] = Pop_PHY;
+
+	always @ (Pending_R or Pending_T or Drop or NoEcho)
+	begin
+		if (Pending_R == HI)      // Transfer from PHY to CORE
+			begin
+				Pop_CORE <= LO;
+				Pop_PHY  <= HI;
+				if (Drop == LO)
+					begin  // Keep the character
+						MuxEcho  <= ~NoEcho;
+						Push_PHY  <= ~NoEcho;
+						Push_CORE <= HI;
+					end
+				else
+					begin // Drop the character
+						MuxEcho  <= LO;
+						Push_PHY <= LO;
+						Push_CORE <= LO;
+					end
+			end
+		else if (Pending_T == HI) // Transfer from CORE to PHY
+			begin
+				MuxEcho   <= LO;
+				Pop_CORE  <= HI;
+				Push_PHY  <= HI;
+				Pop_PHY   <= LO;
+				Push_CORE <= LO;
+			end
+		else
+			begin                  // No Traffic
+				MuxEcho   <= LO;
+				Pop_CORE  <= LO;
+				Push_PHY  <= LO;
+				Pop_PHY   <= LO;
+				Push_CORE <= LO;
+			end
+	end
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS232 INTERFACE WITH FIFO
+ *=========================================================================
+ * 
+ * This module brings together the Physical Layer module and adds an input
+ * and an output FIFO plus a controller to handle the interaction.
+ *
+ * Because there is now the potential for the Receive FIFO to fill up, the
+ * module looks for an ESC character and takes the 'Escape' output HI
+ * if it is detected. This output is NOT latched, meaning that the higher
+ * level logic must be ready to act upon it at all times. The ESC character
+ * is also handled normally like any other character as far as being placed
+ * in the data stream is concerned.
+ *
+ */
+
+module RS232wFIFO(Test16, ToOther, FromOther, 
+   NoXonXoff, Escape, Push, Pop, Empty, Full, Lost, TXD, RXD, RTS, CTS, DSR, rst, clk);
+
+	parameter LO = 1'b0, HI = 1'b1;
+	parameter ESCAPE = 8'h1B;
+
+	output [15:0] Test16;
+	input [7:0] ToOther;
+	output [7:0] FromOther;
+	output Escape;
+	input  NoXonXoff;               // Disable XonXoff Flow Control
+	input Push, Pop;
+	output Empty, Full, Lost;
+	input TXD, RTS;
+	output RXD, CTS, DSR;
+	input rst, clk;
+
+	wire [7:0] Transmit, Received;
+	wire FF_I, AF_I, HF_I, AE_I;
+	wire       AF_O, HF_O, AE_O, EF_O;
+	wire Push_I;
+	wire Pop_O;
+
+	wire _CTS, _DSR;
+	assign CTS = RTS;
+	assign DSR = HI;
+	
+	assign Escape = ((Received == ESCAPE)? HI : LO);  
+	wire [7:0] NormalData;
+
+	RS232PHY PHY 
+	(
+		.ToDTE(Transmit), .FromDTE(Received), .Send(Send), .Sending(Sending), .Receiving(Receiving), 
+		.TXD(TXD), .RXD(RXD), .RTS(RTS), .CTS(_CTS), .DSR(_DSR), .rst(rst), .clk(clk)
+	);
+
+	FIFO16x8 FIFO_IN
+	(
+		.DataOut(FromOther), .DataIn(Received), 
+		.FF(FF_I), .AF(AF_I), .HF(HF_I), .AE(AE_I), .EF(Empty), 
+		.Push(Push_I), .Pop(Pop), .Dump(rst), .Clk(clk)
+	);
+
+	FIFO16x8 FIFO_OUT
+	(
+		.DataOut(NormalData), .DataIn(ToOther), 
+		.FF(Full), .AF(AF_O), .HF(HF_O), .AE(AE_O), .EF(EF_O), 
+		.Push(Push), .Pop(Pop_O), .Dump(rst), .Clk(clk)
+	);
+
+	wire Suspend;
+	wire BypassRequest, Bypass;
+	wire [7:0] BypassData;
+
+	assign Transmit = (Bypass == HI)? BypassData : NormalData;
+		 
+	RS232_XON_XOFF_CTLR XONOFF
+	(
+		.Test8(Test16[15:8]),
+		.NoXonXoff(NoXonXoff),
+		.ReceivedData(Received), 
+		.Suspend(Suspend),
+		.TX_AF(AF_O), .TX_AE(AE_O), // was .TX_AE(AF_O), 
+		.RX_AF(AF_I), .RX_AE(AE_I), // was .RX_AE(AF_I), 
+		.BypassRequest(BypassRequest),  
+		.BypassData(BypassData),
+		.Bypass(Bypass),
+		.rst(rst), .clk(clk)
+	);
+	wire [7:0] TestTemp;
+	RS232_TRANSMIT_CTLR TXCTLR
+	(
+		//.Test8(Test16[7:0]),
+		.Test8(TestTemp),
+		.Send(Send), .Pop(Pop_O), .Empty(EF_O), .Busy(Sending), 
+		.Suspend(Suspend), .BypassRequest(BypassRequest), .Bypass(Bypass),
+		.rst(rst), .clk(clk)
+	);
+
+	RS232_RECEIVE_CTLR RXCTLR 
+	(
+		.Push(Push_I), .Lost(Lost), .Full(FF_I), .Busy(Receiving), .rst(rst), .clk(clk)
+	);
+
+	assign Test16[7] = Full;
+	assign Test16[6] = AF_O; 
+	//assign TestTemp[5] = HF_O; 
+	assign Test16[5] = AE_O; 
+	assign Test16[4] = EF_O; 
+	assign Test16[3] = FF_I; 
+	assign Test16[2] = AF_I; 
+	//assign TestTemp[0] = HF_I; 
+	assign Test16[1] = AE_I; 
+	assign Test16[0] = Empty; 
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS-232 SOFTWARE FLOW CONTROL (Xon/Xoff) CONTROLLER
+ *=========================================================================
+ * 
+ * MODULE:    RS232_XON_XOFF_CTLR()
+ * 
+ * This module processes the necessary data and produces the necessary
+ * signals to effect bidirectional software flow control. In order to 
+ * avoid a situation in which both the HOST and the FPGA "simultaneously"
+ * block each other and hence can't send the signal to unblock the other,
+ * The transmission and reception of Xon/Xoff codes are nonblockable.
+ *
+ * HOST -> FPGA Flow Control
+ *
+ * This involves detecting Xon/Xoff characters sent by the HOST and asserting
+ * the Suspend flag to the Physical Layer Transmit Module accordingly.
+ *
+ * FPGA -> HOST Flow Control
+ *
+ * This involves detecting when the receive FIFO is near the ends of its 
+ * capacity (either almost full or almost empty) and sending Xon/Xoff codes
+ * to the HOST as appropriate.
+ *
+ * When the HOST is unblocked (as tracked by an internal register) and the
+ * input FIFO is almost full, an Xoff code is sent to the HOST which places
+ * it in a blocked state. It remains this way until the FIFO is almost empty
+ * at which time an Xon code is sent which unblocks it.
+ *
+ * In order to make sure that only one code is sent, a handshaking protocol
+ * is used to bypass the normal transmission pipeline.
+ *
+ *		Event Pipeline
+ *			The XonXoff Controller starts in the Unblocked State.
+ *			The Input FIFO raises its AE flag.
+ *			The XonXoff Controller enters the Blocking state.
+ *			The XonXoff Controller sets the BypassData to XOFF.
+ *			The XonXoff Controller asserts the BypassRequest flag.
+ *			The TX Controller asserts the Bypass flag.
+ *			The XonXoff Controller relaxes the BypassRequest flag.
+ *			The XonXoff Controller enters the Blocked	state.
+ *			The Input FIFO raises its AE flag (AE has already fallen).
+ *			The XonXoff Controller enters the Unblocking state.
+ *			The XonXoff Controller sets the BypassData to XOFF.
+ *			The XonXoff Controller asserts the BypassRequest flag.
+ *			The TX Controller asserts the Bypass flag.
+ *			The XonXoff Controller relaxes the BypassRequest flag.
+ *			The XonXoff Controller enters the Unblocked.
+ *
+
+ *
+ * Upon a reset event, the FIFOs are cleared, the suspend flag is cleared,
+ * and the HOST is assumed to be unblocked.
+ */
+
+module RS232_XON_XOFF_CTLR
+(
+	Test8,
+	NoXonXoff,
+	ReceivedData, Suspend, 
+	TX_AF, TX_AE, 
+	RX_AF, RX_AE, 
+	BypassRequest, BypassData, 
+	Bypass,
+	rst, clk
+);
+
+	output [7:0] Test8;
+	input  NoXonXoff;             // Disable XonXoff Flow Control
+	input  [7:0] ReceivedData;    // Data from UART RX PHY 
+	output Suspend;               // Suspend command to UART TX CONTROLLER
+	input  TX_AF, TX_AE;          // Transmit FIFO Status Flags
+	input  RX_AF, RX_AE;          // Receive FIFO Status Flags
+	output BypassRequest;         // Bypass Request to UART TX CONTROLLER
+	output [7:0] BypassData;      // Bypass Data to UART TX PHY
+	input  Bypass;                // Bypass Acknowledgement from UART TX CONTROLLER
+	input  rst, clk;              // Master clock and reset
+
+	parameter LO = 1'b0, HI = 1'b1;
+	parameter XON    = 8'h11;
+	parameter XOFF   = 8'h13;
+
+	reg [7:0] BypassData;
+	reg BypassRequest;
+	reg Suspend;
+
+	// Blocking FPGA Transmission based on Xon/Xoff codes from HOST
+	always @ (posedge clk)
+	begin
+		if (rst == 1)
+			Suspend <= LO;
+		else if (NoXonXoff == HI)
+			Suspend <= LO;
+		else if (ReceivedData == XOFF)
+			Suspend <= HI;
+		else if (ReceivedData == XON)
+			Suspend <= LO;
+		else
+			Suspend <= Suspend;
+	end
+
+	// Sending Xon/Xoff codes to HOST based on status of Input FIFO
+	parameter 
+		S_UNBLOCKED  = 2'b00,
+		S_BLOCKING   = 2'b01,
+		S_BLOCKED    = 2'b10,
+		S_UNBLOCKING = 2'b11;
+
+	// These FF's are HI if the HOST is cleared to send
+	wire Host_CTS, TX_CTSb, RX_CTSb;
+
+	RSFF FF_TX (.Q(TX_CTSb), .S(TX_AF), .R(TX_AE), .rst(rst), .clk(clk));
+	RSFF FF_RX (.Q(RX_CTSb), .S(RX_AF), .R(RX_AE), .rst(rst), .clk(clk));
+	assign Host_CTS = ((TX_CTSb == LO)&&(RX_CTSb == LO))? HI : LO;
+	//assign Host_CTS = (RX_NCTS == LO)? HI : LO;
+
+	// Xon/Xoff State Machine
+	reg [1:0] State;
+	reg [1:0] Next_State;
+
+	always @ (posedge clk)
+	begin
+		if ((NoXonXoff == HI)||(rst == 1))
+			State <= S_UNBLOCKED;
+		else
+			State <= Next_State;
+	end
+
+	always @ (State or RX_AF or RX_AE or Bypass or Host_CTS)
+	begin
+		case (State)
+			S_UNBLOCKED:
+				begin
+					BypassData = XON;
+					BypassRequest = LO;
+					Next_State = (Host_CTS == LO)? S_BLOCKING : State;
+				end
+			S_BLOCKING:
+				begin
+					BypassData = XOFF;
+					BypassRequest = HI;
+					Next_State = (Bypass == HI)? S_BLOCKED : State;
+				end
+			S_BLOCKED:
+				begin
+					BypassData = XOFF;
+					BypassRequest = LO;
+					Next_State = (Host_CTS == HI)? S_UNBLOCKING : State;
+				end
+			S_UNBLOCKING:
+				begin
+					BypassData = XON;
+					BypassRequest = HI;
+					Next_State = (Bypass == HI)? S_UNBLOCKED : State;
+				end
+			default:
+				begin
+					BypassData = XON;
+					BypassRequest = LO;
+					Next_State = S_UNBLOCKED;
+				end
+		endcase
+	end
+
+	assign Test8[7] = RX_AE;
+	assign Test8[6] = RX_AF;
+	assign Test8[5] = Bypass;
+	assign Test8[4] = Suspend;
+	assign Test8[3] = NoXonXoff;
+	assign Test8[2] = BypassRequest;
+	assign Test8[1] = State[1];
+	assign Test8[0] = State[0];
+
+endmodule
+
+module RS232_TRANSMIT_CTLR 
+(
+	Test8, Send, Pop, Empty, Busy, 
+	Suspend, BypassRequest, Bypass,
+	rst, clk
+
+);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	output [7:0] Test8;
+	output Send, Pop;
+	input Empty, Busy, rst, clk;
+	input Suspend, BypassRequest;
+	output Bypass;
+
+	parameter 
+		IDLE = 2'b00,
+		INIT = 2'b01,
+		POP  = 2'b10,
+		BUSY = 2'b11;
+
+	reg [1:0] State;
+	reg [1:0] Next_State;
+
+	reg BypassSend, Next_BypassSend;
+
+	always @ (posedge clk)
+	begin
+		if (rst == 1)
+			begin
+				State <= IDLE;
+				BypassSend <= LO;
+			end
+		else
+			begin
+				State <= Next_State;
+				BypassSend <= Next_BypassSend;
+			end
+	end
+
+	reg Send_int, Pop_int;
+
+	assign Send = Send_int;
+	assign Pop = Pop_int;
+	assign Bypass = BypassSend;
+
+	always @ 
+	(
+		State or Empty or Busy or Suspend or 
+		BypassSend or BypassRequest
+	)
+	begin
+		case (State)
+			IDLE:
+				begin
+					Send_int = LO;
+					Pop_int = LO;
+					Next_BypassSend = BypassRequest;
+					if (BypassRequest == HI)
+						Next_State = INIT;
+					else if (Suspend == HI)
+						Next_State = IDLE;
+					else if (Empty == LO)
+						Next_State = INIT;
+					else
+						Next_State = State;
+				end
+			INIT:
+				begin
+					Send_int = HI;
+					Pop_int = LO;
+					Next_BypassSend = BypassSend;
+					Next_State = (Busy == HI)? POP:INIT;
+				end
+			POP:
+				begin
+					Send_int = LO;
+					Pop_int = (BypassSend)? LO : HI;
+					Next_BypassSend = BypassSend;
+					Next_State = BUSY;
+				end
+			BUSY:
+				begin
+					Send_int = LO;
+					Pop_int = LO;
+					Next_BypassSend = BypassSend;
+					Next_State = (Busy == LO)? IDLE:BUSY;
+				end
+			default:
+				begin
+					Send_int = LO;
+					Pop_int = LO;
+					Next_BypassSend = BypassSend;
+					Next_State = IDLE;
+				end
+		endcase
+	end
+
+	assign Test8[7] = Send_int;
+	assign Test8[6] = Pop_int;
+	assign Test8[5] = BypassRequest;
+	assign Test8[4] = Bypass;
+	assign Test8[3] = Next_State[1];
+	assign Test8[2] = Next_State[0];
+	assign Test8[1] = State[1];
+	assign Test8[0] = State[0];
+
+endmodule
+
+module RS232_RECEIVE_CTLR (Push, Lost, Full, Busy, rst, clk);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	output Push, Lost;
+	input Full, Busy, rst, clk;
+
+	parameter 
+		IDLE = 2'b00,
+		BUSY = 2'b01,
+		PUSH = 2'b10;
+
+	reg [1:0] State;
+	reg [1:0] Next_State;
+
+	always @ (posedge clk)
+	begin
+		if (rst == 1)
+			State <= IDLE;
+		else
+			State <= Next_State;
+	end
+
+	reg Push_int, Lost_int;
+
+	assign Lost = Lost_int;
+	assign Push = Push_int;
+
+	always @ (State or Busy or Full)
+	begin
+		case (State)
+			IDLE:
+				begin
+					Lost_int = LO;
+					Push_int = LO;
+					Next_State = (Busy == HI)? BUSY:IDLE;
+				end
+			BUSY:
+				begin
+					Lost_int = LO;
+					Push_int = LO;
+					Next_State = (Busy == LO)? PUSH:BUSY;
+				end
+			PUSH:
+				begin
+					Lost_int = (Full == HI)? HI:LO;
+					Push_int = (Full == LO)? HI:LO;
+					Next_State = IDLE;
+				end
+			default:
+				begin
+					Lost_int = LO;
+					Push_int = LO;
+					Next_State = IDLE;
+				end
+		endcase
+	end
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS232 PHYSICAL LAYER IMPLEMENTATION
+ *=========================================================================
+*/
+module RS232PHY(ToDTE, FromDTE, Send, Sending, Receiving, TXD, RXD, RTS, CTS, DSR, rst, clk);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	input [7:0] ToDTE;
+	output [7:0] FromDTE;
+	input Send;
+	output Sending, Receiving;
+	input TXD, RTS;
+	output RXD, CTS, DSR;
+	input rst, clk;
+
+	wire [3:0] rate;     // Baud Rate Selector
+	wire b, b_r, b_f;    // Baud clock, rising edge, falling edge
+	wire b2, b2_r, b2_f; // 2x Baud clock, rising edge, falling edge
+	assign rate = 4'd9;  // Selects 115200 baud
+
+	//assign CTS = RTS;
+	//assign DSR = HI;
+
+	assign CTS = Receiving;
+	assign DSR = Sending;
+
+	RS232BAUDCLK BAUD
+	(
+		.b(b), .b2(b2), 
+		.b_r(b_r), .b_f(b_f), .b2_r(b2_r), .b2_f(b2_f), .rate(rate), 
+		.rst(rst), .clk(clk)
+	);
+
+	RS232TXPHY TXPHY
+	(
+		.SerialOut(RXD), .DataIn(ToDTE), .Send(Send), .Sending(Sending), 
+		.b_r(b_r), .rst(rst), .clk(clk)
+	);
+
+	RS232RXPHY RXPHY
+	(
+		.SerialIn(TXD), .DataOut(FromDTE), .Receiving(Receiving), 
+		.b(b), .b2_r(b2_r), .b2_f(b2_f), .rst(rst), .clk(clk)
+	);
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS232 TRANSMITTER PHYSICAL LAYER IMPLEMENTATION
+ *=========================================================================
+ * This module is used to generate and send single packets of serialized
+ * data over an RS-232 serial link.
+ *
+ * The User should query the status of the Sending bit before asserting
+ * the Send command since such commands will be ignored if the Sending bit
+ * is already HI. Another approach is to assert the Send bit and the look
+ * for a rising edge of Sending after that as an acknowledgement.
+ *
+ * Upon receiving an actionable Send command, the DataIn is captured so
+ * that the User can set up for the next data value if desired. The Send
+ * but must be relaxed and reasserted for every data value to be sent.
+ *
+ *	SendCmd - HI when Send is asserted and not already Sending
+ *	SendFlag - HI from valid SendCmd until Sending actually starts
+ *	SendLoad - HI for first clock cycle of SendCmd
+ * Sending - HI from first rising baud clock edge 
+ * 
+ */
+
+module RS232TXPHY(SerialOut, DataIn, Send, Sending, b_r, rst, clk);
+	
+	parameter LO = 1'b0, HI = 1'b1;
+
+	output SerialOut;
+	input [7:0] DataIn;
+	input Send;
+	input b_r, rst, clk;
+	output Sending;
+
+	// Send Trigger
+	wire SendCmd;
+	wire SendFlag;
+	wire SendLoad;
+	wire Sending;
+
+	// Transmit Shift Registers
+	wire [9:0] QTX, QTXTR;
+	wire TXshift, TXout;
+	wire [9:0] TXpacket, TXtrack;
+	wire [7:0] Data;
+	wire TXtrackSO;
+
+	assign SendCmd = ((Send==HI)&&(Sending==LO)); 
+	assign SendLoad = ((Send==HI)&&(SendFlag==LO));
+
+	OneShot SendTrap
+	(
+		.Q(SendFlag), .Start(SendCmd), .Stop(Sending), 
+		.rst(rst), .clk(clk)
+	);
+
+	assign SendInit = ((SendFlag==HI)&&(b_r==HI)); 
+	assign SendDone = ((Sending==HI)&&(TXtrackSO==LO)&&(b_r==HI));
+
+	OneShot MMVTX
+	(
+		.Q(Sending), .Start(SendInit), .Stop(SendDone), 
+		.rst(rst), .clk(clk)
+	);
+
+	Reg8 TXREG
+	(
+		.Q(Data), .D(DataIn), 
+		.en(SendLoad), .rst(rst), .clk(clk)
+	);
+
+	assign TXpacket = {HI,Data,LO};
+	assign TXtrack = {LO,8'b11111111,HI};
+	assign TXshift = ((TXtrackSO==HI)&&(b_r==HI));
+	assign SerialOut = (Sending==HI)? TXout : HI;
+
+	ShiftReg10 TXSR
+	(
+		.Sout(TXout), .Sin(HI),
+		.Q(QTX), .D(TXpacket), 
+		.Shift(TXshift), .Load(SendInit), 
+		.rst(rst), .clk(clk)
+	);
+
+	ShiftReg10 TXTR 
+	(
+		.Sout(TXtrackSO), .Sin(LO),
+		.Q(QTXTR), .D(TXtrack), 
+		.Shift(TXshift), .Load(SendInit), 
+		.rst(rst), .clk(clk)
+	);
+
+endmodule
+
+/*
+ *=========================================================================
+ * RS232 RECEIVER PHYSICAL LAYER IMPLEMENTATION
+ *=========================================================================
+ * The data on TXD is buffered because it is asynchronous to the master
+ * clock. This ensures that the data used by the various parts of the
+ * logic is consistent and has no setup/hold time issues.
+ *
+ * RecInit is asserted with the first rising edge of the Baud2 clk
+ * following the beginning of the Start Bit. This signal is used to
+ * fire a one-shot that determines the Receiving bit. At the same time,
+ * the phase of the Baud clk is captured and a pattern of all 1's is 
+ * placed in the receiver's tracking shift register. 
+ *
+ * As long as the receiver is in the receiving mode, the bits are shifted
+ * in with every falling edge of the Baud2 clock that is on the proper
+ * phase of the Baud clk. 
+ *
+ * The tracking register's serial output is used to detect when shifting
+ * should cease, which is with the first rising edge of the Baud2 clk
+ * that occurs after a LO has been shifted into the serial output of the
+ * tracking register.
+ * 
+ */
+
+module RS232RXPHY(SerialIn, DataOut, Receiving, b, b2_r, b2_f, rst, clk);
+
+	parameter LO = 1'b0, HI = 1'b1;
+
+	input SerialIn;
+	output [7:0] DataOut;
+	input b, b2_r, b2_f, rst, clk;
+	output Receiving;
+
+	// Receive Trigger
+	wire Phase;
+	wire [9:0] RXpacket, RXtrack;
+	assign RXtrack = {HI,8'b11111111,HI};
+	wire RXout, RXtrackSO;
+
+	wire RecInit;
+	wire RecDone;
+	wire Receiving;
+	wire TXin;
+
+	DFFRen TX_IN
+	(
+		.Q(TXin), .D(SerialIn),
+		.en(HI), .rst(rst), .clk(clk)
+	);
+
+	assign RecInit = ((TXin == LO)&&(Receiving == LO)&&(b2_r== HI)); 
+	assign RecDone = ((Receiving == HI)&&(RXtrackSO == LO)&&(b2_r== HI));
+
+	DFFRen PHASE
+	(
+		.Q(Phase), .D(~b),
+		.en(RecInit), .rst(rst), .clk(clk)
+	);
+
+	OneShot MMVRX
+	(
+		.Q(Receiving), .Start(RecInit), .Stop(RecDone), 
+		.rst(rst), .clk(clk)
+	);
+
+	// Receive Shift Registers
+	wire [9:0] QRX, QRXTR;
+	wire RXshift;
+	assign QRX = 10'b0;
+
+	assign RXshift = ((RXtrackSO == HI)&&(b==Phase)&&(b2_f==HI));
+
+	ShiftReg10 RXSR
+	(
+		.Sout(RXout), .Sin(TXin), 
+		.Q(RXpacket), .D(QRX), 
+		.Shift(RXshift), .Load(RecInit), 
+		.rst(rst), .clk(clk)
+	);
+
+	ShiftReg10 RXTR
+	(
+		.Sout(RXtrackSO), .Sin(LO),
+		.Q(QRXTR), .D(RXtrack), 
+		.Shift(RXshift), .Load(RecInit), 
+		.rst(rst), .clk(clk)
+	);
+
+	Reg8 RXREG
+	(
+		.Q(DataOut), .D(RXpacket[8:1]), 
+		.en(RecDone), .rst(rst), .clk(clk)
+	);
+
+endmodule
+
+/*
+ *=========================================================================
+ * BAUD RATE GENERATOR
+ *=========================================================================
+ * The Transmit and Receive Physical Layer modules sync to a free
+ * running Baud Clock. The receiver samples each bit somewhere between
+ * 1/3 and 2/3 of the bit duration. This is accomplished using a clock that
+ * is running at twice the baud rate. The actual baud clock is derived from
+ * this 2x clock by transitioning on its rising edges.
+ *
+ * To avoid using global clock resources, all components are completely
+ * synchronous with the system master clock. Hence the Baud Rate Generator
+ * provides the same enable bits that are used to generate the two clocks.
+ *
+ * Signal: b    Baud Clock
+ *         b_r  HI when b will transition from LO to HI on next clk 
+ *         b_f  HI when b will transition from HI to LO on next clk
+ *         b2   2x Baud Clock
+ *         b2_r HI when b will transition from LO to HI on next clk 
+ *         b2_f HI when b will transition from HI to LO on next clk
+ *
+ * The baud rate divisor is equal to the number of master clock cycles the
+ * corresponds to one half cycle of the 2x Baud Clock. This 
+ * 
+ * BAUD_DIVISOR = ((MASTER_FREQUENCY)/(BAUD_RATE))/4
+ * 
+ * This formular will result in a trunctation instead of a rounding, but 
+ * that is acceptable.
+ *
+ *=========================================================================
+ */
+
+module RS232BAUDCLK (b, b2, b_r, b_f, b2_r, b2_f, rate, rst, clk);
+
+	parameter CLK_FREQ = 50000000;
+
+	parameter LO = 1'b0, HI = 1'b1;
+	input [3:0] rate;
+	input rst, clk;
+	output b, b_r, b_f;    // Baud clock, rising edge, falling edge
+	output b2, b2_r, b2_f; // 2x Baud clock, rising edge, falling edge
+
+	parameter 
+		BAUD_300    = 4'd0,
+		BAUD_600    = 4'd1,
+		BAUD_1200   = 4'd2,
+		BAUD_2400   = 4'd3,
+		BAUD_4800   = 4'd4,
+		BAUD_9600   = 4'd5,
+		BAUD_19200  = 4'd6,
+		BAUD_38400  = 4'd7,
+		BAUD_57600  = 4'd8,
+		BAUD_155200 = 4'd9;
+
+	// Baud Rate Divisor Selection
+	wire [15:0] Baud_Divisor;
+	reg [15:0] Baud_Divisor_int;
+	assign Baud_Divisor = Baud_Divisor_int;
+	always @ (rate)
+	begin
+		case (rate)
+			BAUD_300   : Baud_Divisor_int = ((CLK_FREQ/300)/4);
+			BAUD_600   : Baud_Divisor_int = ((CLK_FREQ/600)/4);
+			BAUD_1200  : Baud_Divisor_int = ((CLK_FREQ/1200)/4);
+			BAUD_2400  : Baud_Divisor_int = ((CLK_FREQ/2400)/4);
+			BAUD_4800  : Baud_Divisor_int = ((CLK_FREQ/4800)/4);
+			BAUD_9600  : Baud_Divisor_int = ((CLK_FREQ/9600)/4);
+			BAUD_19200 : Baud_Divisor_int = ((CLK_FREQ/19200)/4);
+			BAUD_38400 : Baud_Divisor_int = ((CLK_FREQ/38400)/4);
+			BAUD_57600 : Baud_Divisor_int = ((CLK_FREQ/57600)/4);
+			BAUD_155200: Baud_Divisor_int = ((CLK_FREQ/115200)/4);
+			default    : Baud_Divisor_int = ((CLK_FREQ/9600)/4);
+		endcase
+	end
+
+	// Combinatorial logic to determine transitions
+	wire tick;
+	assign b2_r = (b2 == LO) && (tick);	
+	assign b2_f = (b2 == HI) && (tick);	
+	assign b_r  = (b  == LO) && (b2_r == HI);	
+	assign b_f  = (b  == HI) && (b2_r == HI);	
+
+	// Baud Clock Generators
+	PulseGen16 RS232_CLK (.Q(tick), .Period(Baud_Divisor), .en(HI), .rst(rst), .clk(clk));
+	DFFRen BAUD2_CLK (.Q(b2), .D(~b2), .en(tick), .rst(rst), .clk(clk));
+	DFFRen BAUD_CLK (.Q(b), .D(~b), .en(b2_r), .rst(rst), .clk(clk));
+
+endmodule
+
