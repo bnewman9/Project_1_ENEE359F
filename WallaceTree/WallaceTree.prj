@@ -1,0 +1,5 @@
+verilog work "nHalfAdder.v"
+verilog work "FullAdder.v"
+verilog work "CSA.v"
+verilog work "CPA.v"
+verilog work "WallaceTree.v"

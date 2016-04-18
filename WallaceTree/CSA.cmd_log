@@ -1,0 +1,2 @@
+xst -intstyle ise -ifn "H:/359F FPGAS/HW4_CLIU/CSA.xst" -ofn "H:/359F FPGAS/HW4_CLIU/CSA.syr" 
+xst -intstyle ise -ifn "H:/359F FPGAS/HW4_CLIU/CSA.xst" -ofn "H:/359F FPGAS/HW4_CLIU/CSA.syr" 

@@ -1,0 +1,5 @@
+set -tmpdir "H:/359F FPGAS/HW4_CLIU/xst/projnav.tmp"
+set -xsthdpdir "H:/359F FPGAS/HW4_CLIU/xst"
+elaborate
+-ifn CPA.prj
+-ifmt mixed
