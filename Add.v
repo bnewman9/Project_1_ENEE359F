@@ -23,6 +23,7 @@ module Add(input clock, input reset, input [31:0] A, input [31:0] B, input add, 
 	reg cont_add;
 	reg swap;
 	reg comp;
+	reg done_f;
 	
 	reg [23:0] s1;
 	reg [23:0] s2;
@@ -55,60 +56,81 @@ module Add(input clock, input reset, input [31:0] A, input [31:0] B, input add, 
 			next <= IDLE;
 			done <= 0;
 			cont_add <= 0;
+			done_f <= 0;
 		end
 		//else if ((add && done == 0)  || state == DONE) begin	
-		else if ((add || cont_add)  || state == DONE) begin			
+		else if ((add || cont_add)   || state == DONE) begin			
 			case (state)
 				IDLE: begin
+					done_f <= 0;
 					state <= next; 				
 					next <= ONE;
 					cont_add <= 1;
 				end
 				ONE: begin 
+					done_f <= 0;
 					state <= next;
 					next <= TWO;
 					cont_add <= 1;
 				end
 				TWO: begin
+					done_f <= 0;
 					state <= next;
 					next <= THREE;
 					cont_add <= 1;
 				end 
 				THREE: begin
+					done_f <= 0;
 					state <= next;
 					next <= FOUR;
 					cont_add <= 1;
 				end
-				FOUR: begin					
+				FOUR: begin	
+					done_f <= 0;
 					state <= next;
 					next <= FIVE;					
 					cont_add <= 1;
 				end
 				FIVE: begin
+					done_f <= 0;
 					state <= next;
 					next <= SIX;
 					cont_add <= 1;
 				end
 				SIX: begin
+					done_f <= 0;
 					state <= next;
 					next <= SEVEN;
 					cont_add <= 1;
 				end
 				SEVEN: begin
+					done_f <= 0;
 					state <= next;
 					next <= EIGHT;
 					cont_add <= 1;
 				end
 				EIGHT: begin
+					done_f <= 0;
 					state <= next;
 					next <= DONE;
 					cont_add <= 1;
 				end
-				DONE: begin 
-					done <= 1;
-					state <= next;					
-					next <= IDLE;
+				DONE: begin 				
+					
 					cont_add <= 0;
+					if (done_f == 0) begin
+						state <= next;
+						next <= DONE;
+						done_f <= 1;
+						done <= 1;
+					end
+					else begin
+						state <= next;					
+						next <= IDLE;
+						done <= 0;
+					end
+					
+					
 				end
 			endcase
 		end
