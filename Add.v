@@ -56,7 +56,8 @@ module Add(input clock, input reset, input [31:0] A, input [31:0] B, input add, 
 			done <= 0;
 			cont_add <= 0;
 		end
-		else if ((add && done == 0) || state == DONE) begin			
+		//else if ((add && done == 0)  || state == DONE) begin	
+		else if ((add || cont_add)  || state == DONE) begin			
 			case (state)
 				IDLE: begin
 					state <= next; 				
