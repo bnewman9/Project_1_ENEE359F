@@ -1,0 +1,41 @@
+Running: C:\Xilinx\14.7\ISE_DS\ISE\bin\nt64\unwrapped\fuse.exe -intstyle ise -incremental -lib unisims_ver -lib unimacro_ver -lib xilinxcorelib_ver -o H:/359F FPGAS/HW4_CLIU/WallaceTree_tb_isim_beh.exe -prj H:/359F FPGAS/HW4_CLIU/WallaceTree_tb_beh.prj work.WallaceTree_tb work.glbl 
+ISim P.20131013 (signature 0x7708f090)
+Number of CPUs detected in this system: 4
+Turning on mult-threading, number of parallel sub-compilation jobs: 8 
+Determining compilation order of HDL files
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/nHalfAdder.v" into library work
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/FullAdder.v" into library work
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/CSA.v" into library work
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/CPA.v" into library work
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" into library work
+Analyzing Verilog file "H:/359F FPGAS/HW4_CLIU/WallaceTree_tb.v" into library work
+Analyzing Verilog file "C:/Xilinx/14.7/ISE_DS/ISE//verilog/src/glbl.v" into library work
+Starting static elaboration
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 60: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 61: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 62: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 63: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 64: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 65: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 66: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 67: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 68: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 69: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 70: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 71: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 72: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 73: Size mismatch in connection of port <cout>. Formal port size is 34-bit while actual signal size is 33-bit.
+WARNING:HDLCompiler:189 - "H:/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 74: Size mismatch in connection of port <sum>. Formal port size is 33-bit while actual signal size is 32-bit.
+Completed static elaboration
+Compiling module nHalfAdder
+Compiling module FullAdder
+Compiling module CSA_default
+Compiling module CPA
+Compiling module WallaceTree
+Compiling module WallaceTree_tb
+Compiling module glbl
+Time Resolution for simulation is 1ps.
+Compiled 7 Verilog Units
+Built simulation executable H:/359F FPGAS/HW4_CLIU/WallaceTree_tb_isim_beh.exe
+Fuse Memory Usage: 28572 KB
+Fuse CPU Usage: 529 ms

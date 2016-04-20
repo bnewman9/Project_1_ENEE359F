@@ -1,0 +1,28 @@
+ISim log file
+Running: H:\359F FPGAS\HW4_CLIU\WallaceTree_tb_isim_beh.exe -intstyle ise -gui -tclbatch isim.cmd -wdb H:/359F FPGAS/HW4_CLIU/WallaceTree_tb_isim_beh.wdb 
+ISim P.20131013 (signature 0x7708f090)
+WARNING: A WEBPACK license was found.
+WARNING: Please use Xilinx License Configuration Manager to check out a full ISim license.
+WARNING: ISim will run in Lite mode. Please refer to the ISim documentation for more information on the differences between the Lite and the Full version.
+This is a Lite version of ISim.
+WARNING: For instance uut/c0/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c1/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c2/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c3/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c4/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c5/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c6/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c7/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c8/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c9/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c10/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c11/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c12/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: For instance uut/c13/, width 34 of formal port cout is not equal to width 33 of actual.
+WARNING: File "//afs/glue.umd.edu/home/glue/c/l/cliu12/home/359F FPGAS/HW4_CLIU/WallaceTree.v" Line 31.  For instance uut/final/, width 33 of formal port sum is not equal to width 32 of actual signal prod1.
+Time resolution is 1 ps
+# onerror resume
+# wave add /
+# run 1000 ns
+Simulator is doing circuit initialization process.
+Finished circuit initialization process.
